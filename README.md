@@ -1,13 +1,13 @@
 # KQL Detection Library
 
 [![CI](https://github.com/CadGoose/kql-detection-library/actions/workflows/ci.yml/badge.svg)](https://github.com/CadGoose/kql-detection-library/actions/workflows/ci.yml)
-[![Docs](https://img.shields.io/badge/docs-cadgoose.github.io-9a3412)](https://cadgoose.github.io/kql-detection-library/)
+[![Docs](https://img.shields.io/badge/docs-cadgoose.github.io-9a3412)](https://cadgoose.github.io/kql/)
 ![Detections](https://img.shields.io/badge/detections-25-16181d)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 Detection rules for **Microsoft Sentinel** and **Microsoft Defender XDR**, written the way a SOC actually needs them. Each one is mapped to MITRE ATT&CK, explains *why* the behaviour matters, and ships with false-positive notes and tuning advice.
 
-**Browse the library:** https://cadgoose.github.io/kql-detection-library/ (searchable, with ATT&CK coverage and copy-to-clipboard queries)
+**Browse the library:** https://cadgoose.github.io/kql/ (searchable, with ATT&CK coverage and copy-to-clipboard queries)
 
 ## Why this exists
 
@@ -78,7 +78,7 @@ az deployment group create -g <resource-group> \
   --template-file dist/rules.json --parameters workspace=<log-analytics-workspace>
 ```
 
-Rule GUIDs are derived from the detection ID, so redeploying updates rules in place instead of creating duplicates. CI also attaches the generated template as a build artifact on every push.
+Rule GUIDs are derived from the detection ID, so redeploying updates rules in place instead of creating duplicates. CI also attaches the generated template as a build artifact on every push, and the latest build is published at https://cadgoose.github.io/kql/sentinel-analytics-rules.json.
 
 ## Using the queries directly
 
