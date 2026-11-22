@@ -1,0 +1,37 @@
+id: KDL-0020
+name: PowerShell launched with an encoded command
+description: >
+  -EncodedCommand hides the real script from casual inspection and is heavily used
+  by malware loaders. The query decodes the Base64 (UTF-16LE) payload inline so the
+  analyst sees the actual script without leaving the results grid.
+severity: Medium
+status: stable
+platforms: [DefenderXDR, Sentinel]
+data_sources: [DeviceProcessEvents]
+tactics: [Execution, DefenseEvasion]
+techniques: [T1059.001, T1027]
+query_frequency: PT1H
+query_period: PT1H
+query: |
+  DeviceProcessEvents
+  | where Timestamp > ago(1h)
+  | where FileName in~ ("powershell.exe", "pwsh.exe", "powershell_ise.exe")
+  | where ProcessCommandLine matches regex @"(?i)\s-(e|ec|en|enc|enco|encodedcommand)\s+[A-Za-z0-9+/=]{20,}"
+  | extend Encoded = extract(@"(?i)\s-(?:e|ec|en|enc|enco|encodedcommand)\s+([A-Za-z0-9+/=]{20,})", 1, ProcessCommandLine)
+  // -EncodedCommand is UTF-16LE: decode, then strip the interleaved NUL bytes.
+  | extend Decoded = replace_regex(base64_decode_tostring(Encoded), @"\x00", "")
+  | extend Suspicious = Decoded has_any ("IEX", "Invoke-Expression", "DownloadString", "FromBase64String",
+      "Net.WebClient", "AmsiUtils", "-bxor", "Reflection.Assembly")
+  | project Timestamp, DeviceName, AccountName, Suspicious, Decoded, ProcessCommandLine,
+      InitiatingProcessFileName, InitiatingProcessCommandLine
+  | order by Suspicious desc, Timestamp desc
+entity_mappings:
+  - entity: Host
+    field: HostName
+    column: DeviceName
+false_positives:
+  - Some management agents (SCCM/Intune remediation, RMM tools) use -EncodedCommand legitimately.
+tuning:
+  - Baseline by InitiatingProcessFileName for a week, then exclude known agents.
+references:
+  - https://attack.mitre.org/techniques/T1059/001/

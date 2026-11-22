@@ -1,0 +1,47 @@
+id: KDL-0007
+name: Privileged Entra role assigned outside PIM
+description: >
+  Detects a direct (permanent, active) assignment to a privileged Entra ID role that
+  did not go through Privileged Identity Management. In a tenant that uses PIM for
+  just-in-time access, direct assignments bypass approval, justification and expiry
+  and are a classic persistence move after an admin account is compromised.
+severity: High
+status: stable
+platforms: [Sentinel]
+data_sources: [AuditLogs]
+tactics: [Persistence, PrivilegeEscalation]
+techniques: [T1098.003]
+query_frequency: PT1H
+query_period: PT1H
+query: |
+  let privilegedRoles = dynamic(["Global Administrator", "Privileged Role Administrator",
+      "Privileged Authentication Administrator", "Security Administrator", "Exchange Administrator",
+      "SharePoint Administrator", "User Administrator", "Application Administrator",
+      "Cloud Application Administrator", "Conditional Access Administrator", "Intune Administrator",
+      "Authentication Administrator", "Hybrid Identity Administrator"]);
+  AuditLogs
+  | where TimeGenerated > ago(1h)
+  | where OperationName == "Add member to role"
+  | where LoggedByService != "PIM"
+  | extend Actor = coalesce(tostring(InitiatedBy.user.userPrincipalName), tostring(InitiatedBy.app.displayName))
+  | extend ActorIP = tostring(InitiatedBy.user.ipAddress)
+  | extend Target = tostring(TargetResources[0].userPrincipalName)
+  | mv-apply prop = TargetResources[0].modifiedProperties on (
+      where tostring(prop.displayName) == "Role.DisplayName"
+      | extend RoleName = trim(@'"', tostring(prop.newValue))
+    )
+  | where RoleName in~ (privilegedRoles)
+  | project TimeGenerated, Actor, ActorIP, Target, RoleName, Result, CorrelationId
+entity_mappings:
+  - entity: Account
+    field: FullName
+    column: Target
+  - entity: IP
+    field: Address
+    column: ActorIP
+false_positives:
+  - Initial tenant build-out or an approved break-glass recovery.
+tuning:
+  - If you do not use PIM yet, this fires for every role change; that is the point - make it a change-control check.
+references:
+  - https://learn.microsoft.com/entra/id-governance/privileged-identity-management/pim-configure

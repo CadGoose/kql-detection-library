@@ -1,0 +1,36 @@
+id: KDL-0014
+name: Unusual volume of BitLocker recovery key reads
+description: >
+  Helpdesk staff read BitLocker recovery keys one device at a time. A single account
+  reading many keys in a short window looks like bulk harvesting - recovery keys
+  unlock stolen laptops and are a quiet exfiltration target after an admin
+  compromise.
+severity: Medium
+status: stable
+platforms: [Sentinel]
+data_sources: [AuditLogs]
+tactics: [CredentialAccess]
+techniques: [T1552]
+query_frequency: PT1H
+query_period: PT1H
+query: |
+  let threshold = 5;
+  AuditLogs
+  | where TimeGenerated > ago(1h)
+  | where OperationName == "Read BitLocker key"
+  | extend Actor = coalesce(tostring(InitiatedBy.user.userPrincipalName), tostring(InitiatedBy.app.displayName))
+  | extend ActorIP = tostring(InitiatedBy.user.ipAddress)
+  | extend Device = extract(@"device: (\S+)", 1, tostring(AdditionalDetails))
+  | summarize KeysRead = count(), Devices = make_set(Device, 50), FirstRead = min(TimeGenerated),
+      LastRead = max(TimeGenerated) by Actor, ActorIP
+  | where KeysRead >= threshold
+entity_mappings:
+  - entity: Account
+    field: FullName
+    column: Actor
+false_positives:
+  - A helpdesk recovering a batch of devices after a failed BIOS/firmware update.
+tuning:
+  - Restrict who can read recovery keys (custom role with microsoft.directory/bitlockerKeys/key/read).
+references:
+  - https://learn.microsoft.com/entra/identity/devices/manage-device-identities#view-or-copy-bitlocker-keys

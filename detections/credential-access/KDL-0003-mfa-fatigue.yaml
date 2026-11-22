@@ -1,0 +1,46 @@
+id: KDL-0003
+name: MFA fatigue - repeated MFA denials followed by success
+description: >
+  Detects a user who denied or failed several MFA prompts (500121) and then
+  completed a successful sign-in shortly after. This is the push-bombing pattern
+  where an attacker holding a valid password spams approvals until the user
+  accepts one. Number matching reduces but does not eliminate this risk.
+severity: High
+status: stable
+platforms: [Sentinel]
+data_sources: [SigninLogs]
+tactics: [CredentialAccess]
+techniques: [T1621]
+query_frequency: PT1H
+query_period: PT2H
+query: |
+  let minDenials = 3;
+  let window = 2h;
+  let denials = SigninLogs
+  | where TimeGenerated > ago(window)
+  | where ResultType == "500121"
+  | summarize Denials = count(), FirstDenial = min(TimeGenerated), LastDenial = max(TimeGenerated),
+      DenialIPs = make_set(IPAddress, 10) by UserPrincipalName
+  | where Denials >= minDenials;
+  SigninLogs
+  | where TimeGenerated > ago(window)
+  | where ResultType == "0" and AuthenticationRequirement == "multiFactorAuthentication"
+  | project SuccessTime = TimeGenerated, UserPrincipalName, SuccessIP = IPAddress, AppDisplayName,
+      Country = tostring(LocationDetails.countryOrRegion)
+  | join kind=inner denials on UserPrincipalName
+  | where SuccessTime between (FirstDenial .. (LastDenial + 30m))
+  | summarize arg_min(SuccessTime, *) by UserPrincipalName
+  | project UserPrincipalName, Denials, FirstDenial, LastDenial, SuccessTime, SuccessIP, DenialIPs, AppDisplayName, Country
+entity_mappings:
+  - entity: Account
+    field: FullName
+    column: UserPrincipalName
+  - entity: IP
+    field: Address
+    column: SuccessIP
+false_positives:
+  - User repeatedly mistyping the number-match code on a new phone.
+tuning:
+  - Raise minDenials if helpdesk sees frequent fat-finger denials; correlate with "user reported suspicious activity" events.
+references:
+  - https://attack.mitre.org/techniques/T1621/

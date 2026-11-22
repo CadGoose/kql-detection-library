@@ -1,0 +1,33 @@
+id: KDL-0022
+name: LSASS memory dump via comsvcs.dll or procdump
+description: >
+  Dumping LSASS memory yields cached credentials and Kerberos tickets. Common
+  living-off-the-land variants call comsvcs.dll MiniDump through rundll32 or use
+  Sysinternals procdump against lsass. Credential Guard and ASR rules mitigate this;
+  the detection catches attempts on machines where they are not yet enforced.
+severity: High
+status: stable
+platforms: [DefenderXDR, Sentinel]
+data_sources: [DeviceProcessEvents]
+tactics: [CredentialAccess]
+techniques: [T1003.001]
+query_frequency: PT15M
+query_period: PT15M
+query: |
+  DeviceProcessEvents
+  | where Timestamp > ago(15m)
+  | where (FileName =~ "rundll32.exe" and ProcessCommandLine has "comsvcs" and ProcessCommandLine has_any ("MiniDump", "#24", "#+24"))
+      or (FileName in~ ("procdump.exe", "procdump64.exe") and ProcessCommandLine has "lsass")
+      or (ProcessCommandLine has "lsass" and ProcessCommandLine has_any ("sekurlsa", "minidump", ".dmp") and FileName !in~ ("MsMpEng.exe", "WerFault.exe"))
+  | project Timestamp, DeviceName, AccountName, FileName, ProcessCommandLine,
+      InitiatingProcessFileName, InitiatingProcessCommandLine, ProcessIntegrityLevel
+entity_mappings:
+  - entity: Host
+    field: HostName
+    column: DeviceName
+false_positives:
+  - Authorized troubleshooting dumps by Microsoft support or an IR team (should be ticketed).
+tuning:
+  - Enable the ASR rule "Block credential stealing from the Windows local security authority subsystem".
+references:
+  - https://attack.mitre.org/techniques/T1003/001/

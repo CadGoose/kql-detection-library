@@ -1,0 +1,40 @@
+id: KDL-0009
+name: Conditional Access policy modified, disabled or deleted
+description: >
+  Any change to Conditional Access policies. Attackers with admin rights weaken CA
+  (add an exclusion, switch to report-only, delete an MFA policy) to keep access
+  quietly. The modified properties are expanded so the analyst can see what changed
+  without opening the portal.
+severity: Medium
+status: stable
+platforms: [Sentinel]
+data_sources: [AuditLogs]
+tactics: [DefenseEvasion, Persistence]
+techniques: [T1556.009]
+query_frequency: PT1H
+query_period: PT1H
+query: |
+  AuditLogs
+  | where TimeGenerated > ago(1h)
+  | where OperationName in ("Update conditional access policy", "Delete conditional access policy",
+      "Add conditional access policy")
+  | extend Actor = coalesce(tostring(InitiatedBy.user.userPrincipalName), tostring(InitiatedBy.app.displayName))
+  | extend ActorIP = tostring(InitiatedBy.user.ipAddress)
+  | extend PolicyName = tostring(TargetResources[0].displayName)
+  | extend NewValue = tostring(TargetResources[0].modifiedProperties[0].newValue)
+  | extend OldValue = tostring(TargetResources[0].modifiedProperties[0].oldValue)
+  | extend NewState = extract(@'"state":"(\w+)"', 1, NewValue), OldState = extract(@'"state":"(\w+)"', 1, OldValue)
+  | extend Weakened = OperationName == "Delete conditional access policy"
+      or (OldState == "enabled" and NewState in ("disabled", "enabledForReportingButNotEnforced"))
+  | project TimeGenerated, OperationName, PolicyName, Actor, ActorIP, OldState, NewState, Weakened, OldValue, NewValue
+  | order by Weakened desc, TimeGenerated desc
+entity_mappings:
+  - entity: Account
+    field: FullName
+    column: Actor
+false_positives:
+  - Planned change-controlled CA updates.
+tuning:
+  - Raise severity to High when Weakened is true; pair with ConditionalAccessDrift snapshots for full diffs.
+references:
+  - https://attack.mitre.org/techniques/T1556/009/

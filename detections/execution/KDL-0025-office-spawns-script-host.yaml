@@ -1,0 +1,34 @@
+id: KDL-0025
+name: Office application spawned a script interpreter or LOLBin
+description: >
+  Word, Excel, PowerPoint or Outlook launching cmd, PowerShell, wscript, mshta or
+  rundll32 is the textbook macro / malicious-attachment execution chain. ASR rules
+  can block this; the detection covers audit-mode devices and gaps.
+severity: High
+status: stable
+platforms: [DefenderXDR, Sentinel]
+data_sources: [DeviceProcessEvents]
+tactics: [Execution]
+techniques: [T1204.002, T1059]
+query_frequency: PT1H
+query_period: PT1H
+query: |
+  let officeApps = dynamic(["winword.exe", "excel.exe", "powerpnt.exe", "outlook.exe", "onenote.exe", "mspub.exe", "visio.exe"]);
+  let children = dynamic(["cmd.exe", "powershell.exe", "pwsh.exe", "wscript.exe", "cscript.exe", "mshta.exe",
+      "rundll32.exe", "regsvr32.exe", "certutil.exe", "bitsadmin.exe", "msbuild.exe", "installutil.exe"]);
+  DeviceProcessEvents
+  | where Timestamp > ago(1h)
+  | where InitiatingProcessFileName in~ (officeApps)
+  | where FileName in~ (children)
+  | project Timestamp, DeviceName, AccountName, Parent = InitiatingProcessFileName, Child = FileName,
+      ProcessCommandLine, ParentCommandLine = InitiatingProcessCommandLine, SHA256
+entity_mappings:
+  - entity: Host
+    field: HostName
+    column: DeviceName
+false_positives:
+  - Legacy Excel add-ins or finance macros that shell out (inventory and sign them).
+tuning:
+  - Enable ASR "Block all Office applications from creating child processes" in block mode once this is quiet.
+references:
+  - https://learn.microsoft.com/defender-endpoint/attack-surface-reduction-rules-reference

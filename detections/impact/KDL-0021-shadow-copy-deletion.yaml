@@ -1,0 +1,35 @@
+id: KDL-0021
+name: Shadow copy or backup catalog deletion (pre-ransomware)
+description: >
+  Ransomware operators delete Volume Shadow Copies, the Windows backup catalog and
+  disable recovery mode right before encryption so victims cannot roll back. These
+  commands almost never run legitimately on endpoints and should trigger isolation.
+severity: High
+status: stable
+platforms: [DefenderXDR, Sentinel]
+data_sources: [DeviceProcessEvents]
+tactics: [Impact]
+techniques: [T1490]
+query_frequency: PT15M
+query_period: PT15M
+query: |
+  DeviceProcessEvents
+  | where Timestamp > ago(15m)
+  | where (FileName =~ "vssadmin.exe" and ProcessCommandLine has_all ("delete", "shadows"))
+      or (FileName =~ "vssadmin.exe" and ProcessCommandLine has_all ("resize", "shadowstorage"))
+      or (FileName =~ "wmic.exe" and ProcessCommandLine has_all ("shadowcopy", "delete"))
+      or (FileName =~ "wbadmin.exe" and ProcessCommandLine has_any ("delete catalog", "delete systemstatebackup"))
+      or (FileName =~ "bcdedit.exe" and ProcessCommandLine has_any ("recoveryenabled no", "bootstatuspolicy ignoreallfailures"))
+      or (FileName in~ ("powershell.exe", "pwsh.exe") and ProcessCommandLine has "Win32_ShadowCopy" and ProcessCommandLine has_any ("Delete", "Remove-"))
+  | project Timestamp, DeviceName, AccountName, FileName, ProcessCommandLine,
+      InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessSHA256
+entity_mappings:
+  - entity: Host
+    field: HostName
+    column: DeviceName
+false_positives:
+  - Backup software resizing shadow storage (validate the parent process and signer).
+tuning:
+  - Wire to an automated device isolation response; minutes matter here.
+references:
+  - https://attack.mitre.org/techniques/T1490/

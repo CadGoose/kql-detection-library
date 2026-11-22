@@ -1,0 +1,42 @@
+id: KDL-0016
+name: Mailbox forwarding to an external address configured
+description: >
+  Detects Set-Mailbox changes that add SMTP forwarding (ForwardingSmtpAddress or
+  ForwardingAddress) to a domain outside the organization. Mailbox-level forwarding
+  is invisible to the user in Outlook and silently copies every message out.
+severity: High
+status: stable
+platforms: [Sentinel]
+data_sources: [OfficeActivity]
+tactics: [Collection, Exfiltration]
+techniques: [T1114.003]
+query_frequency: PT1H
+query_period: PT1H
+query: |
+  // List your accepted domains so internal forwarding is not flagged.
+  let internalDomains = dynamic(["contoso.com", "contoso.onmicrosoft.com"]);
+  OfficeActivity
+  | where TimeGenerated > ago(1h)
+  | where Operation in ("Set-Mailbox", "New-TransportRule", "Set-TransportRule")
+  | extend Params = parse_json(Parameters)
+  | mv-apply p = Params on (
+      summarize P = make_bag(bag_pack(tostring(p.Name), tostring(p.Value)))
+    )
+  | extend ForwardTo = tostring(coalesce(P.ForwardingSmtpAddress, P.ForwardingAddress,
+      P.RedirectMessageTo, P.BlindCopyTo, P.CopyTo))
+  | where isnotempty(ForwardTo)
+  | extend ForwardDomain = tolower(extract(@"@([A-Za-z0-9\.\-]+)", 1, ForwardTo))
+  | where isnotempty(ForwardDomain) and not(ForwardDomain in (internalDomains))
+  | extend DeliverToMailboxAndForward = tostring(P.DeliverToMailboxAndForward)
+  | project TimeGenerated, Operation, Actor = UserId, ClientIP, Target = OfficeObjectId,
+      ForwardTo, ForwardDomain, DeliverToMailboxAndForward
+entity_mappings:
+  - entity: Account
+    field: FullName
+    column: Actor
+false_positives:
+  - Executives forwarding to an approved personal assistant service; mergers with not-yet-accepted domains.
+tuning:
+  - Block automatic external forwarding with the outbound spam policy; this rule then catches policy bypass attempts.
+references:
+  - https://learn.microsoft.com/defender-office-365/outbound-spam-policies-external-email-forwarding

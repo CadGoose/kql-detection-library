@@ -1,0 +1,37 @@
+id: KDL-0006
+name: Admin portal sign-in where Conditional Access was not applied
+description: >
+  Successful sign-ins to Azure, Entra or Microsoft 365 admin surfaces where no
+  Conditional Access policy applied. Admin portals should always be covered by an
+  MFA (ideally phishing-resistant) policy; "notApplied" means a policy gap or an
+  excluded account, both of which matter on admin access.
+severity: Medium
+status: stable
+platforms: [Sentinel]
+data_sources: [SigninLogs]
+tactics: [InitialAccess, DefenseEvasion]
+techniques: [T1078.004]
+query_frequency: PT1H
+query_period: PT1H
+query: |
+  let adminApps = dynamic(["Azure Portal", "Microsoft Azure PowerShell", "Microsoft Azure CLI",
+      "Microsoft Admin Portals", "Microsoft 365 Security and Compliance Center",
+      "Microsoft Graph Command Line Tools", "Windows Azure Service Management API"]);
+  SigninLogs
+  | where TimeGenerated > ago(1h)
+  | where ResultType == "0"
+  | where AppDisplayName in~ (adminApps)
+  | where ConditionalAccessStatus == "notApplied"
+  | extend Country = tostring(LocationDetails.countryOrRegion)
+  | summarize SignIns = count(), Apps = make_set(AppDisplayName), IPs = make_set(IPAddress, 10),
+      Countries = make_set(Country), LastSeen = max(TimeGenerated) by UserPrincipalName
+entity_mappings:
+  - entity: Account
+    field: FullName
+    column: UserPrincipalName
+false_positives:
+  - Break-glass accounts (covered separately by KDL-0005).
+tuning:
+  - Prefer fixing the CA gap ("All users" + "Microsoft Admin Portals" target) over excluding accounts here.
+references:
+  - https://learn.microsoft.com/entra/identity/conditional-access/how-to-policy-mfa-admin-portals

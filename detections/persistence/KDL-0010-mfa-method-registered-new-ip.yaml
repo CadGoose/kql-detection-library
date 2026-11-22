@@ -1,0 +1,45 @@
+id: KDL-0010
+name: New MFA method registered from an IP the user has not signed in from
+description: >
+  After phishing a password or session, attackers register their own authenticator
+  app or phone number to survive a password reset. This correlates security-info
+  registration events with the user's 14-day sign-in IP history and flags
+  registrations from an unfamiliar address.
+severity: High
+status: stable
+platforms: [Sentinel]
+data_sources: [AuditLogs, SigninLogs]
+tactics: [Persistence]
+techniques: [T1098.005]
+query_frequency: PT1H
+query_period: P14D
+query: |
+  let lookback = 14d;
+  let recent = 1h;
+  let knownIPs = SigninLogs
+  | where TimeGenerated between (ago(lookback) .. ago(recent))
+  | where ResultType == "0"
+  | summarize KnownIPs = make_set(IPAddress, 200) by UserPrincipalName;
+  AuditLogs
+  | where TimeGenerated > ago(recent)
+  | where LoggedByService == "Authentication Methods"
+  | where OperationName in ("User registered security info", "User changed default security info",
+      "Admin registered security info")
+  | extend UserPrincipalName = tostring(TargetResources[0].userPrincipalName)
+  | extend RegistrationIP = tostring(InitiatedBy.user.ipAddress)
+  | join kind=leftouter knownIPs on UserPrincipalName
+  | where isempty(RegistrationIP) == false and not(set_has_element(coalesce(KnownIPs, dynamic([])), RegistrationIP))
+  | project TimeGenerated, UserPrincipalName, OperationName, ResultReason, RegistrationIP
+entity_mappings:
+  - entity: Account
+    field: FullName
+    column: UserPrincipalName
+  - entity: IP
+    field: Address
+    column: RegistrationIP
+false_positives:
+  - New phone setup from home on a residential IP never used before.
+tuning:
+  - Restrict security-info registration to trusted locations with a CA policy on "Register security information".
+references:
+  - https://learn.microsoft.com/entra/identity/conditional-access/how-to-policy-registration

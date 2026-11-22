@@ -1,0 +1,43 @@
+id: KDL-0018
+name: User clicked a link in an email later removed by ZAP
+description: >
+  Zero-hour auto purge (ZAP) removes phishing that was only identified after
+  delivery. ZAP cleans the mailbox but cannot undo a click that already happened.
+  This joins post-delivery ZAP actions with Safe Links click events so the SOC can
+  reset credentials for the users who actually clicked.
+severity: High
+status: stable
+platforms: [DefenderXDR, Sentinel]
+data_sources: [EmailPostDeliveryEvents, UrlClickEvents, EmailEvents]
+tactics: [InitialAccess]
+techniques: [T1566.002]
+query_frequency: PT1H
+query_period: P1D
+query: |
+  let lookback = 1d;
+  let zapped = EmailPostDeliveryEvents
+  | where Timestamp > ago(lookback)
+  | where ActionType in ("Phish ZAP", "Malware ZAP")
+  | project ZapTime = Timestamp, NetworkMessageId, ZapAction = ActionType, RecipientEmailAddress;
+  UrlClickEvents
+  | where Timestamp > ago(lookback)
+  | where ActionType in ("ClickAllowed", "UrlScanInProgress") or IsClickedThrough == true
+  | project ClickTime = Timestamp, NetworkMessageId, AccountUpn, Url, ClickAction = ActionType, IPAddress
+  | join kind=inner zapped on NetworkMessageId
+  | where ClickTime <= ZapTime
+  | join kind=leftouter (EmailEvents | where Timestamp > ago(lookback)
+      | project NetworkMessageId, Subject, SenderFromAddress, SenderIPv4) on NetworkMessageId
+  | project ClickTime, ZapTime, AccountUpn, Url, ClickAction, ZapAction, Subject, SenderFromAddress, SenderIPv4, IPAddress
+entity_mappings:
+  - entity: Account
+    field: FullName
+    column: AccountUpn
+  - entity: URL
+    field: Url
+    column: Url
+false_positives:
+  - Rare; ZAP false positives on legitimate bulk mail occasionally occur.
+tuning:
+  - Feed results into an automated "revoke sessions + require password change" playbook.
+references:
+  - https://learn.microsoft.com/defender-office-365/zero-hour-auto-purge

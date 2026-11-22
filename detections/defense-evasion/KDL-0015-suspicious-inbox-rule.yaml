@@ -1,0 +1,52 @@
+id: KDL-0015
+name: Suspicious inbox rule created (BEC pattern)
+description: >
+  Business email compromise actors create inbox rules that hide replies from the
+  real user: delete or move messages to obscure folders (RSS Feeds, Conversation
+  History, Archive) when they contain words like invoice, payment, wire or the
+  name of the victim's finance contact. This flags new or modified rules with those
+  traits.
+severity: High
+status: stable
+platforms: [Sentinel]
+data_sources: [OfficeActivity]
+tactics: [DefenseEvasion, Collection]
+techniques: [T1564.008]
+query_frequency: PT1H
+query_period: PT1H
+query: |
+  let keywords = dynamic(["invoice", "payment", "wire", "transfer", "bank", "remittance", "ach",
+      "urgent", "w2", "payroll", "deposit", "hacked", "phish", "suspicious", "fraud"]);
+  let hiddenFolders = dynamic(["RSS Feeds", "RSS Subscriptions", "Conversation History", "Archive", "Junk Email", "Deleted Items"]);
+  OfficeActivity
+  | where TimeGenerated > ago(1h)
+  | where Operation in ("New-InboxRule", "Set-InboxRule", "UpdateInboxRules")
+  | extend Params = parse_json(Parameters)
+  | mv-apply p = Params on (
+      summarize RuleParams = make_bag(bag_pack(tostring(p.Name), tostring(p.Value)))
+    )
+  | extend RuleName = tostring(RuleParams.Name),
+      DeletesMail = tostring(RuleParams.DeleteMessage) =~ "True" or tostring(RuleParams.SoftDeleteMessage) =~ "True",
+      MarksRead = tostring(RuleParams.MarkAsRead) =~ "True",
+      MoveTo = tostring(RuleParams.MoveToFolder),
+      ForwardTo = strcat(tostring(RuleParams.ForwardTo), tostring(RuleParams.RedirectTo), tostring(RuleParams.ForwardAsAttachmentTo)),
+      Words = tolower(strcat(tostring(RuleParams.SubjectContainsWords), " ", tostring(RuleParams.SubjectOrBodyContainsWords), " ", tostring(RuleParams.BodyContainsWords)))
+  | extend KeywordHit = Words has_any (keywords),
+      HiddenFolder = MoveTo has_any (hiddenFolders),
+      ShortName = strlen(RuleName) <= 2 or RuleName matches regex @"^[\.\s,;]+$"
+  | extend Score = toint(DeletesMail) * 2 + toint(MarksRead) + toint(HiddenFolder) * 2 + toint(KeywordHit) * 2
+      + toint(isnotempty(ForwardTo)) * 3 + toint(ShortName)
+  | where Score >= 3
+  | project TimeGenerated, UserId, ClientIP, Operation, RuleName, Score, DeletesMail, MarksRead, MoveTo, ForwardTo, Words
+  | order by Score desc
+entity_mappings:
+  - entity: Account
+    field: FullName
+    column: UserId
+false_positives:
+  - Users filing vendor invoices into an "Archive" folder with mark-as-read.
+tuning:
+  - Raise the Score threshold to 4 if your users heavily automate mailbox filing.
+  - Pair with MailboxThreatHunter for a tenant-wide sweep of existing rules (this rule only sees new changes).
+references:
+  - https://learn.microsoft.com/security/operations/incident-response-playbook-compromised-malicious-app

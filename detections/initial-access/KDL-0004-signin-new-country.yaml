@@ -1,0 +1,42 @@
+id: KDL-0004
+name: Successful sign-in from a country not seen for the user in 14 days
+description: >
+  Builds a 14-day per-user country baseline from successful sign-ins and alerts
+  when a user successfully signs in from a country outside that baseline. Simple,
+  explainable and hard to evade without a residential proxy in the right country.
+severity: Medium
+status: stable
+platforms: [Sentinel]
+data_sources: [SigninLogs]
+tactics: [InitialAccess]
+techniques: [T1078.004]
+query_frequency: PT1H
+query_period: P14D
+query: |
+  let lookback = 14d;
+  let recent = 1h;
+  let baseline = SigninLogs
+  | where TimeGenerated between (ago(lookback) .. ago(recent))
+  | where ResultType == "0"
+  | extend Country = tostring(LocationDetails.countryOrRegion)
+  | where isnotempty(Country)
+  | summarize KnownCountries = make_set(Country, 50) by UserPrincipalName;
+  SigninLogs
+  | where TimeGenerated > ago(recent)
+  | where ResultType == "0"
+  | extend Country = tostring(LocationDetails.countryOrRegion), City = tostring(LocationDetails.city)
+  | where isnotempty(Country)
+  | join kind=inner baseline on UserPrincipalName
+  | where not(set_has_element(KnownCountries, Country))
+  | summarize FirstSeen = min(TimeGenerated), IPs = make_set(IPAddress, 10), Apps = make_set(AppDisplayName, 10)
+      by UserPrincipalName, Country, City, Baseline = tostring(KnownCountries)
+entity_mappings:
+  - entity: Account
+    field: FullName
+    column: UserPrincipalName
+false_positives:
+  - Business travel; staff using a personal VPN or a mobile carrier that geolocates abroad.
+tuning:
+  - Users with no baseline (new hires) are excluded by the inner join on purpose; cover them with a separate new-user rule.
+references:
+  - https://learn.microsoft.com/entra/identity/monitoring-health/concept-sign-ins

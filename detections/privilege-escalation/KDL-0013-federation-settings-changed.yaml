@@ -1,0 +1,35 @@
+id: KDL-0013
+name: Domain federation or authentication settings changed
+description: >
+  Converting a managed domain to federated, or changing the signing certificate or
+  issuer of an existing federation, lets an attacker mint tokens for any user in
+  that domain (Golden SAML / "domain trust modification"). These operations are
+  rare enough that every event should be reviewed.
+severity: High
+status: stable
+platforms: [Sentinel]
+data_sources: [AuditLogs]
+tactics: [PrivilegeEscalation, DefenseEvasion]
+techniques: [T1484.002]
+query_frequency: PT1H
+query_period: PT1H
+query: |
+  AuditLogs
+  | where TimeGenerated > ago(1h)
+  | where OperationName in ("Set federation settings on domain", "Set domain authentication",
+      "Add unverified domain", "Verify domain", "Add verified domain")
+  | extend Actor = coalesce(tostring(InitiatedBy.user.userPrincipalName), tostring(InitiatedBy.app.displayName))
+  | extend ActorIP = tostring(InitiatedBy.user.ipAddress)
+  | extend Domain = tostring(TargetResources[0].displayName)
+  | extend Changes = TargetResources[0].modifiedProperties
+  | project TimeGenerated, OperationName, Domain, Actor, ActorIP, Result, Changes
+entity_mappings:
+  - entity: Account
+    field: FullName
+    column: Actor
+false_positives:
+  - Planned identity-provider migrations (e.g. AD FS to cloud auth) - tie to a change ticket.
+tuning:
+  - Do not tune out; route straight to the identity owner.
+references:
+  - https://attack.mitre.org/techniques/T1484/002/

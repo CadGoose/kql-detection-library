@@ -1,0 +1,33 @@
+id: KDL-0024
+name: Inbound RDP accepted from a public IP address
+description: >
+  Internet-exposed RDP is one of the most common ransomware entry points. This flags
+  devices that accepted inbound RDP (TCP 3389) from a public IP, which means a
+  firewall or NAT rule is exposing the host directly.
+severity: High
+status: stable
+platforms: [DefenderXDR, Sentinel]
+data_sources: [DeviceNetworkEvents]
+tactics: [InitialAccess, LateralMovement]
+techniques: [T1133, T1021.001]
+query_frequency: PT1H
+query_period: PT1H
+query: |
+  DeviceNetworkEvents
+  | where Timestamp > ago(1h)
+  | where ActionType == "InboundConnectionAccepted"
+  | where LocalPort == 3389
+  | where RemoteIPType == "Public"
+  | summarize Connections = count(), RemoteIPs = make_set(RemoteIP, 50), FirstSeen = min(Timestamp),
+      LastSeen = max(Timestamp) by DeviceName, LocalIP
+  | order by Connections desc
+entity_mappings:
+  - entity: Host
+    field: HostName
+    column: DeviceName
+false_positives:
+  - Hosts behind an RD Gateway that is itself logging the public client IP (verify topology).
+tuning:
+  - The fix is the firewall rule, not the detection - move access behind VPN or RD Gateway with MFA.
+references:
+  - https://attack.mitre.org/techniques/T1133/

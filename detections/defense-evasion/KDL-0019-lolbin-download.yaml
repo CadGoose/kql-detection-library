@@ -1,0 +1,35 @@
+id: KDL-0019
+name: Living-off-the-land binary used to download a file
+description: >
+  certutil, bitsadmin, mshta, regsvr32 and friends are signed Windows binaries that
+  can fetch remote payloads, so they slip past naive allow-listing. Their download
+  switches are rarely used legitimately on user workstations.
+severity: Medium
+status: stable
+platforms: [DefenderXDR, Sentinel]
+data_sources: [DeviceProcessEvents]
+tactics: [CommandAndControl, DefenseEvasion]
+techniques: [T1105, T1218]
+query_frequency: PT1H
+query_period: PT1H
+query: |
+  DeviceProcessEvents
+  | where Timestamp > ago(1h)
+  | where (FileName =~ "certutil.exe" and ProcessCommandLine has_any ("urlcache", "verifyctl") and ProcessCommandLine has "http")
+      or (FileName =~ "bitsadmin.exe" and ProcessCommandLine has_any ("/transfer", "/addfile") )
+      or (FileName =~ "mshta.exe" and ProcessCommandLine has_any ("http:", "https:", "javascript:", "vbscript:"))
+      or (FileName =~ "regsvr32.exe" and ProcessCommandLine has "/i:" and ProcessCommandLine has "http")
+      or (FileName in~ ("powershell.exe", "pwsh.exe") and ProcessCommandLine has_any ("DownloadFile", "DownloadString", "Invoke-WebRequest", "iwr ", "Start-BitsTransfer") and ProcessCommandLine has "http")
+  | extend Url = extract(@"(https?://[^\s'""]+)", 1, ProcessCommandLine)
+  | project Timestamp, DeviceName, AccountName, FileName, ProcessCommandLine, Url,
+      InitiatingProcessFileName, InitiatingProcessCommandLine, SHA256
+entity_mappings:
+  - entity: Host
+    field: HostName
+    column: DeviceName
+false_positives:
+  - Software deployment or RMM scripts that pull installers with PowerShell.
+tuning:
+  - Exclude your RMM agent by InitiatingProcessFileName plus signer, not by command line text.
+references:
+  - https://lolbas-project.github.io/

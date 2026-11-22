@@ -1,0 +1,37 @@
+id: KDL-0017
+name: FullAccess or SendAs permission granted on a mailbox
+description: >
+  Adding FullAccess, SendAs or SendOnBehalf rights lets one account read or send as
+  another mailbox. After an admin compromise, attackers grant themselves access to
+  executive or finance mailboxes rather than stealing each password separately.
+severity: Medium
+status: stable
+platforms: [Sentinel]
+data_sources: [OfficeActivity]
+tactics: [Persistence, Collection]
+techniques: [T1098.002]
+query_frequency: PT1H
+query_period: PT1H
+query: |
+  OfficeActivity
+  | where TimeGenerated > ago(1h)
+  | where Operation in ("Add-MailboxPermission", "Add-RecipientPermission", "Set-Mailbox")
+  | extend Params = parse_json(Parameters)
+  | mv-apply p = Params on (
+      summarize P = make_bag(bag_pack(tostring(p.Name), tostring(p.Value)))
+    )
+  | extend Rights = strcat(tostring(P.AccessRights), tostring(P.GrantSendOnBehalfTo))
+  | where Rights has_any ("FullAccess", "SendAs") or isnotempty(tostring(P.GrantSendOnBehalfTo))
+  | extend Mailbox = tostring(coalesce(P.Identity, OfficeObjectId)), Grantee = tostring(coalesce(P.User, P.Trustee, P.GrantSendOnBehalfTo))
+  | where Grantee !startswith "NT AUTHORITY"
+  | project TimeGenerated, Operation, Actor = UserId, ClientIP, Mailbox, Grantee, Rights
+entity_mappings:
+  - entity: Account
+    field: FullName
+    column: Actor
+false_positives:
+  - Helpdesk granting a manager access to a departed employee's mailbox (should have a ticket).
+tuning:
+  - Raise severity when Mailbox is on a VIP / finance watchlist.
+references:
+  - https://attack.mitre.org/techniques/T1098/002/

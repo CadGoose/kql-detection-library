@@ -1,0 +1,41 @@
+id: KDL-0008
+name: PIM role activation outside business hours
+description: >
+  Surfaces PIM activations of privileged roles outside defined business hours or on
+  weekends. Not malicious by itself, but an attacker holding an eligible admin's
+  session will activate roles whenever they get the chance - usually when the real
+  admin is asleep.
+severity: Low
+status: stable
+platforms: [Sentinel]
+data_sources: [AuditLogs]
+tactics: [PrivilegeEscalation]
+techniques: [T1078.004]
+query_frequency: PT1H
+query_period: PT1H
+query: |
+  // Business hours in local time; adjust the offset for your region (Toronto = -5h, -4h in DST).
+  let utcOffset = -5h;
+  let startHour = 7;
+  let endHour = 19;
+  AuditLogs
+  | where TimeGenerated > ago(1h)
+  | where LoggedByService == "PIM"
+  | where OperationName has "PIM activation" and Result == "success"
+  | extend LocalTime = TimeGenerated + utcOffset
+  | extend LocalHour = hourofday(LocalTime), LocalDay = dayofweek(LocalTime)
+  | where LocalHour < startHour or LocalHour >= endHour or LocalDay in (0d, 6d)
+  | extend Actor = tostring(InitiatedBy.user.userPrincipalName)
+  | extend ActorIP = tostring(InitiatedBy.user.ipAddress)
+  | extend RoleName = tostring(TargetResources[0].displayName)
+  | project TimeGenerated, LocalTime, Actor, ActorIP, RoleName, OperationName, ResultReason
+entity_mappings:
+  - entity: Account
+    field: FullName
+    column: Actor
+false_positives:
+  - On-call admins and scheduled maintenance windows.
+tuning:
+  - Join with an on-call watchlist to suppress expected activations.
+references:
+  - https://learn.microsoft.com/entra/id-governance/privileged-identity-management/pim-how-to-use-audit-log

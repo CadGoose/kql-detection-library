@@ -1,0 +1,33 @@
+id: KDL-0023
+name: Account added to local Administrators group on an endpoint
+description: >
+  Adding an account to the built-in Administrators group (S-1-5-32-544) on a
+  workstation or server grants persistent local admin. In an estate managed by
+  Intune / LAPS, ad-hoc additions outside those processes are suspicious.
+severity: Medium
+status: stable
+platforms: [DefenderXDR, Sentinel]
+data_sources: [DeviceEvents]
+tactics: [Persistence, PrivilegeEscalation]
+techniques: [T1098]
+query_frequency: PT1H
+query_period: PT1H
+query: |
+  DeviceEvents
+  | where Timestamp > ago(1h)
+  | where ActionType == "UserAccountAddedToLocalGroup"
+  | extend Fields = parse_json(AdditionalFields)
+  | extend GroupSid = tostring(Fields.GroupSid), GroupName = tostring(Fields.GroupName)
+  | where GroupSid == "S-1-5-32-544"
+  | project Timestamp, DeviceName, AddedAccountSid = AccountSid, AddedAccountName = AccountName, GroupName,
+      Actor = InitiatingProcessAccountName, InitiatingProcessFileName, InitiatingProcessCommandLine
+entity_mappings:
+  - entity: Host
+    field: HostName
+    column: DeviceName
+false_positives:
+  - Intune "Local user group membership" policy applying, or a technician's approved elevation.
+tuning:
+  - Exclude changes where InitiatingProcessFileName is the Intune Management Extension or your PAM agent.
+references:
+  - https://learn.microsoft.com/defender-xdr/advanced-hunting-deviceevents-table

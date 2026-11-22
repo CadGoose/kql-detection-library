@@ -1,0 +1,42 @@
+id: KDL-0011
+name: OAuth consent granted with high-risk permissions
+description: >
+  Illicit consent grants give an attacker-controlled app durable, MFA-proof access
+  to mail and files. This flags user or admin consents that include high-risk
+  delegated or application permissions such as Mail.Read, Mail.Send, Files.ReadWrite.All
+  or offline_access combined with mailbox scopes.
+severity: High
+status: stable
+platforms: [Sentinel]
+data_sources: [AuditLogs]
+tactics: [CredentialAccess, Persistence]
+techniques: [T1528]
+query_frequency: PT1H
+query_period: PT1H
+query: |
+  let riskyScopes = dynamic(["Mail.Read", "Mail.ReadWrite", "Mail.Send", "MailboxSettings.ReadWrite",
+      "Files.Read.All", "Files.ReadWrite.All", "Sites.ReadWrite.All", "Directory.ReadWrite.All",
+      "User.ReadWrite.All", "Application.ReadWrite.All", "full_access_as_app", "EWS.AccessAsUser.All"]);
+  AuditLogs
+  | where TimeGenerated > ago(1h)
+  | where OperationName == "Consent to application"
+  | extend Actor = tostring(InitiatedBy.user.userPrincipalName), ActorIP = tostring(InitiatedBy.user.ipAddress)
+  | extend AppName = tostring(TargetResources[0].displayName), AppId = tostring(TargetResources[0].id)
+  | mv-apply prop = TargetResources[0].modifiedProperties on (
+      where tostring(prop.displayName) in ("ConsentAction.Permissions", "ConsentContext.IsAdminConsent")
+      | summarize Props = make_bag(bag_pack(tostring(prop.displayName), tostring(prop.newValue)))
+    )
+  | extend Permissions = tostring(Props["ConsentAction.Permissions"]), IsAdminConsent = tostring(Props["ConsentContext.IsAdminConsent"])
+  | extend MatchedScopes = set_intersect(extract_all(@"([A-Za-z_]+\.[A-Za-z.]+|full_access_as_app)", Permissions), riskyScopes)
+  | where array_length(MatchedScopes) > 0
+  | project TimeGenerated, Actor, ActorIP, AppName, AppId, IsAdminConsent, MatchedScopes, Permissions
+entity_mappings:
+  - entity: Account
+    field: FullName
+    column: Actor
+false_positives:
+  - Legitimate admin-approved integrations (backup, e-signature, CRM mail sync).
+tuning:
+  - Disable user consent or restrict to verified publishers + low-risk scopes; this rule then catches admin consents only.
+references:
+  - https://learn.microsoft.com/security/operations/incident-response-playbook-app-consent

@@ -1,0 +1,36 @@
+id: KDL-0005
+name: Break-glass (emergency access) account sign-in
+description: >
+  Any sign-in attempt, successful or failed, by an emergency access account.
+  These accounts are excluded from Conditional Access by design and should almost
+  never be used, so every event deserves a human looking at it.
+severity: High
+status: stable
+platforms: [Sentinel]
+data_sources: [SigninLogs, AADNonInteractiveUserSignInLogs]
+tactics: [InitialAccess, PrivilegeEscalation]
+techniques: [T1078.004]
+query_frequency: PT15M
+query_period: PT15M
+query: |
+  // Replace with your emergency access UPNs, or use: _GetWatchlist('BreakGlassAccounts') | project SearchKey
+  let breakGlass = dynamic(["breakglass01@contoso.onmicrosoft.com", "breakglass02@contoso.onmicrosoft.com"]);
+  union isfuzzy=true SigninLogs, AADNonInteractiveUserSignInLogs
+  | where TimeGenerated > ago(15m)
+  | where UserPrincipalName in~ (breakGlass)
+  // LocationDetails is dynamic in SigninLogs but string in the non-interactive table, so use Location.
+  | project TimeGenerated, UserPrincipalName, ResultType, ResultDescription, IPAddress, Country = Location,
+      AppDisplayName, ClientAppUsed, UserAgent, Type
+entity_mappings:
+  - entity: Account
+    field: FullName
+    column: UserPrincipalName
+  - entity: IP
+    field: Address
+    column: IPAddress
+false_positives:
+  - Scheduled break-glass validation tests (document them and close with that reason).
+tuning:
+  - Keep this rule at 15 minutes; route to on-call, not the normal queue.
+references:
+  - https://learn.microsoft.com/entra/identity/role-based-access-control/security-emergency-access

@@ -1,0 +1,40 @@
+id: KDL-0001
+name: Successful sign-in using legacy authentication
+description: >
+  Detects successful Entra ID sign-ins that used a legacy authentication protocol
+  (IMAP, POP3, SMTP AUTH, ActiveSync, EWS basic, etc.). Legacy protocols cannot
+  enforce MFA, so a successful legacy sign-in is a common foothold for password
+  spray and credential stuffing. In a tenant that has blocked legacy auth with
+  Conditional Access, any hit is either a policy gap or a misconfigured exclusion.
+severity: Medium
+status: stable
+platforms: [Sentinel]
+data_sources: [SigninLogs]
+tactics: [InitialAccess, DefenseEvasion]
+techniques: [T1078.004]
+query_frequency: PT1H
+query_period: PT1H
+query: |
+  let modernClients = dynamic(["Browser", "Mobile Apps and Desktop clients"]);
+  SigninLogs
+  | where TimeGenerated > ago(1h)
+  | where ResultType == "0"
+  | where isnotempty(ClientAppUsed) and ClientAppUsed !in (modernClients)
+  | extend Country = tostring(LocationDetails.countryOrRegion)
+  | summarize SignIns = count(), Apps = make_set(AppDisplayName, 10),
+      Protocols = make_set(ClientAppUsed, 10), IPs = make_set(IPAddress, 20),
+      Countries = make_set(Country, 10), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated)
+      by UserPrincipalName
+  | order by SignIns desc
+entity_mappings:
+  - entity: Account
+    field: FullName
+    column: UserPrincipalName
+false_positives:
+  - Multifunction printers / scanners using SMTP AUTH for scan-to-email.
+  - Line-of-business apps still using EWS basic auth or IMAP service accounts.
+tuning:
+  - Move known service accounts to a watchlist and exclude them explicitly, then fix them.
+  - Pair with a Conditional Access policy that blocks "Other clients" and "Exchange ActiveSync clients".
+references:
+  - https://learn.microsoft.com/entra/identity/conditional-access/policy-block-legacy-authentication
